@@ -2101,6 +2101,70 @@ class Office365Connector(BaseConnector):
         action_result.update_summary({'emails_matched': action_result.get_data_size()})
 
         return action_result.set_status(phantom.APP_SUCCESS)
+    
+    def _handle_search_emails_for_all_users(self, param):
+
+        self.save_progress("In action handler for: {0}".format(self.get_action_identifier()))
+        action_result = self.add_action_result(ActionResult(dict(param)))
+
+        limit = param.get('limit')
+        # Integer validation for 'limit' action parameter
+        ret_val, limit = _validate_integer(action_result, limit, "'limit' action")
+        if phantom.is_fail(ret_val):
+            return action_result.get_status()
+
+        # user
+        ret_val, response = self._paginator(action_result, "/users")
+        users = map(lambda x: x.get('mail'), response)
+        for user in users:
+            endpoint = "/users/{0}".format(user)
+            params = dict()
+
+            # folder
+            if 'folder' in param:
+                endpoint += "/mailfolders('{}')".format(param['folder'])
+            
+            endpoint += '/messages'
+
+            if param.get('query'):
+                endpoint += '?{}'.format(param['query'])
+            else:    
+
+                # search params
+                search_query = ''
+                if 'subject' in param:
+                    search_query += "subject:{0} ".format(param['subject'])
+
+                if 'body' in param:
+                    search_query += "body:{0} ".format(param['body'])
+
+                if 'sender' in param:
+                    search_query += "from:{0} ".format(param['sender'])
+
+                if search_query:
+                    params['$search'] = '"{0}"'.format(search_query[:-1])
+
+                if param.get('select'):
+                    params['$select'] = param['select']
+
+            ret_val, messages = self._paginator(action_result, endpoint, limit, params=params)
+
+            if phantom.is_fail(ret_val):
+                msg = action_result.get_message()
+                if '$top' in msg or '$top/top' in msg:
+                    msg += "The '$top' parameter is already used internally to handle pagination logic. "
+                    msg += "If you want to restrict results in terms of number of output results, you can use the 'limit' parameter."
+                    return action_result.set_status(phantom.APP_ERROR, msg)
+                return action_result.get_status()
+
+            if not messages:
+                continue
+                #return action_result.set_status(phantom.APP_SUCCESS, MSGOFFICE365_NO_DATA_FOUND + ' ' + users)
+
+            action_result.update_data(messages)
+            action_result.update_summary({'emails_matched': action_result.get_data_size()})
+
+        return action_result.set_status(phantom.APP_SUCCESS)
 
     def _get_folder_id(self, action_result, folder, email):
         # hindsight is always 20-20, set the folder path separator to be '/', thinking folder names allow '\' as a char.
@@ -2420,6 +2484,9 @@ class Office365Connector(BaseConnector):
 
         elif action_id == 'run_query':
             ret_val = self._handle_run_query(param)
+        
+        elif action_id == 'search_emails_for_all_users':
+            ret_val = self._handle_search_emails_for_all_users(param)
 
         elif action_id == 'list_events':
             ret_val = self._handle_list_events(param)
